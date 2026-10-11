@@ -1,0 +1,54 @@
+# Spoke gateway: istio-managed Gateway API front door for one spoke
+# namespace. The Hub's clusters.yaml points at the auto-provisioned
+# Service `<name>-istio.<ns>.svc.cluster.local:80` produced by the
+# istio gateway controller from this Gateway.
+#
+# Rendered per-spoke by scripts/deploy-spokes.sh; substitutes
+#   {{ namespace }}   pricing-reversal-cw-a | pricing-reversal-cw-b
+#   {{ gateway_name }} pricing-reversal-costguard-spoke
+#   {{ pool_name }}   pricing-reversal-costguard-spoke   (matches the
+#                     InferencePool the router chart already deployed)
+#
+# The `istio.io/enable-inference-extproc: "true"` label is what makes
+# istio wire the InferencePool's endpointPickerRef (spoke EPP on port
+# 9002) as an ext_proc filter for HTTPRoute backendRefs of kind
+# InferencePool. Without it the InferencePool backendRef is refused.
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ gateway_name }}
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/name: pricing-reversal-costguard
+    app.kubernetes.io/component: spoke-gateway
+    llm-d.ai/guide: pricing-reversal
+    istio.io/enable-inference-extproc: "true"
+spec:
+  gatewayClassName: istio
+  listeners:
+    - name: default
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ gateway_name }}
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/name: pricing-reversal-costguard
+    app.kubernetes.io/component: spoke-gateway
+    llm-d.ai/guide: pricing-reversal
+spec:
+  parentRefs:
+    - name: {{ gateway_name }}
+  rules:
+    - backendRefs:
+        - group: inference.networking.k8s.io
+          kind: InferencePool
+          name: {{ pool_name }}
+          port: 8000

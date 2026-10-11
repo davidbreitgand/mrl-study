@@ -1,0 +1,94 @@
+# In-cluster harness Job for the mrl head-to-head studies.
+#
+# One Job per (arrival regime × smoke|full) cell. The Job name suffix
+# is ${RUN_TAG} — one per cell, so previous cells' Jobs don't collide
+# and their results remain inspectable while a new one runs.
+#
+# Rendered by scripts/apply-harness-job.sh with envsubst on:
+#   RUN_TAG                 e.g. poisson-smoke, weibull-0.5, calibration
+#   NAMESPACE               mrl-headtohead
+#   HARNESS_IMAGE           ghcr.io/<user>/mrl-harness:<sha>
+#   ROUTER_SERVICE          bare Service name (e.g. mrl-headtohead-hub-epp);
+#                           the harness concatenates it with ROUTER_PORT into
+#                           http://<svc>:<port>, so a full URL here breaks it
+#   ROUTER_PORT             int (80 for the Hub's http Service port)
+#   JOB_DEADLINE_SECONDS    activeDeadlineSeconds (6 h default)
+#   CM_NAME                 name of the ConfigMap holding experiment.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: harness-${RUN_TAG}
+  namespace: ${NAMESPACE}
+  labels:
+    llm-d.ai/guide: mrl-headtohead
+    app.kubernetes.io/component: harness
+    mrl-headtohead/cell: ${RUN_TAG}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: ${JOB_DEADLINE_SECONDS}
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        llm-d.ai/guide: mrl-headtohead
+        app.kubernetes.io/component: harness
+        mrl-headtohead/cell: ${RUN_TAG}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: pricing-reversal-harness
+      securityContext:
+        # Harness image runs as UID 1001 (Dockerfile's `USER 1001`).
+        # fsGroup makes Kubernetes chown the results PVC mount to GID 1001
+        # on attach so the harness process can write. Without this, on
+        # VAST's CSI driver, the freshly-provisioned filesystem is owned
+        # by root and every write to /results fails with EACCES.
+        # OnRootMismatch skips the chown on volumes that already have the
+        # right group, so subsequent mounts are fast.
+        fsGroup: 1001
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: harness
+          image: ${HARNESS_IMAGE}
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "pricing_reversal_harness"]
+          args:
+            - "--config-dir=/config"
+            - "--results-dir=/results/${RUN_TAG}"
+            - "--namespace=${NAMESPACE}"
+            - "--router-service=${ROUTER_SERVICE}"
+            - "--router-port=${ROUTER_PORT}"
+            # mrl_study spokes are deployed out-of-band by
+            # scripts/deploy-spoke.sh, so the harness does NOT create
+            # its own vLLM Deployment.
+            - "--skip-model-deploy"
+            - "--resume"
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: results
+              mountPath: /results
+            - name: clusters
+              mountPath: /etc/harness/clusters.yaml
+              subPath: clusters.yaml
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: ${CM_NAME}
+        - name: results
+          persistentVolumeClaim:
+            claimName: mrl-headtohead-results
+        - name: clusters
+          configMap:
+            name: mrl-headtohead-clusters

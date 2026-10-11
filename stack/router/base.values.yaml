@@ -1,0 +1,51 @@
+## Base values shared with the llm-d Router chart.
+## Layer pricing-reversal.values.yaml on top for guide-specific overrides.
+##
+## Copied and pinned from ~/git/clean/nemotron-3-super-120b/router/base.values.yaml;
+## resource requests and log levels tuned for a small single-replica deployment.
+
+router:
+  epp:
+    replicas: 1
+    flags:
+      v: 2
+    pluginsConfigFile: "default-plugins.yaml"
+    resources:
+      requests:
+        cpu: "4"
+        memory: 8Gi
+      limits:
+        memory: 16Gi
+
+  inferencePool:
+    failureMode: "FailOpen"
+
+  modelServers:
+    protocol: http
+
+  proxy:
+    args:
+      - "--service-node"
+      - "envoy-sidecar"
+      - "--log-level"
+      - "warn"
+      - "--concurrency"
+      - "8"
+      - "--drain-strategy"
+      - "immediate"
+      - "--drain-time-s"
+      - "60"
+      - "-c"
+      - "/etc/envoy/envoy.yaml"
+    resources:
+      requests:
+        cpu: "4"
+        memory: 8Gi
+      limits:
+        memory: 16Gi
+
+  tracing:
+    otelExporterEndpoint: "http://localhost:4317"
+    sampling:
+      sampler: "parentbased_traceidratio"
+      samplerArg: "0.1"

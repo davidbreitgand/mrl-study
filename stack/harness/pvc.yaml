@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mrl-headtohead-results
+  # namespace injected by kubectl -n <ns> at apply time
+  labels:
+    llm-d.ai/guide: mrl-headtohead
+    app.kubernetes.io/component: results
+spec:
+  # ReadWriteOnce (not RWX) so VAST's CSI driver honors the harness Pod's
+  # fsGroup: 1001 and chowns the mount on attach. VAST's
+  # fsGroupPolicy=ReadWriteOnceWithFSType only activates the chown on RWO
+  # volumes. Single-writer PVC (one harness Job at a time), so RWO gives
+  # up nothing.
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: shared-vast
+  resources:
+    requests:
+      storage: 50Gi

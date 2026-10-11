@@ -1,0 +1,86 @@
+# Benchmark datasets replayed by the harness.
+# The dataset ids match the file-prefix pattern used by data/consolidated/
+# (see constant/experiment_config.json in the paper's repo).
+
+datasets:
+  - id: mmlupro
+    split: test_3000
+    file_prefix: mmlupro-test_3000
+    hf_source: "TIGER-Lab/MMLU-Pro"
+    hf_split: "test"
+    category: knowledge
+    # A-J letter answers; the mcq_letter scorer now accepts A-J.
+    scorer: mcq_letter
+    # Prompt renders a variable-length options block (up to 10 lines).
+    prompt_template: |
+      Answer the following multiple choice question. The last line of your response should be of the following format: 'Answer: $LETTER' (without quotes) where LETTER is one of A/B/C/D/E/F/G/H/I/J. Think step by step before answering.
+
+      {question}
+
+      {options}
+    expected_count: 3000
+
+  - id: totrandom
+    # Pre-built shuffled pool bundled at build time under
+    # harness/src/pricing_reversal_harness/data/totrandom.json. 4834
+    # rows drawn from six source datasets (aime, gpqa, livemathbench,
+    # mmlupro, arc-agi-v1, livecodebench). Prompts are fully formed at
+    # build time by each source's own loader — the totrandom loader
+    # emits them byte-identical. Per-row scoring routes by
+    # `source_dataset` via dispatch_by_source_dataset.
+    split: shuffled
+    file_prefix: totrandom-shuffled_4834
+    # No HF fetch — the JSON is package data.
+    category: mixed
+    scorer: dispatch_by_source_dataset
+    expected_count: 2000
+
+  - id: totrandom-alternating
+    # 500-row slice of totrandom, alternating long-source (arc-agi-v1,
+    # gpqa, aime) and short-source (mmlupro, livecodebench,
+    # livemathbench) records. Adversarial ordering for QD's
+    # queue-length-only picker. Bundled at build time under
+    # harness/src/pricing_reversal_harness/data/totrandom-alternating.json.
+    split: alternating_500
+    file_prefix: totrandom-alternating
+    category: mixed
+    scorer: dispatch_by_source_dataset
+    expected_count: 500
+
+  - id: totrandom-alternating-1000
+    # 1000-row extension of totrandom-alternating for the MID-only
+    # statistical-power follow-up. 500 unique longs + 500 unique
+    # shorts in strict alternation (long pool has 658 unique
+    # records so no reuse required).
+    split: alternating_1000
+    file_prefix: totrandom-alternating-1000
+    category: mixed
+    scorer: dispatch_by_source_dataset
+    expected_count: 1000
+
+  - id: totrandom-wide-alternating-1000
+    # Wide-bimodality (~10x) alternating dataset for the queue-length
+    # -vs-work trap sanity check. Filtered from the QD-baseline
+    # n=2000 journal: longs are {arc-agi-v1, gpqa, aime} with
+    # baseline elapsed_seconds >= 150s (107 unique, wrap ~4.7x);
+    # shorts are {mmlupro, livecodebench, livemathbench} with
+    # baseline elapsed_seconds <= 30s (501 unique, no wrap).
+    split: wide_alternating_1000
+    file_prefix: totrandom-wide-alternating-1000
+    category: mixed
+    scorer: dispatch_by_source_dataset
+    expected_count: 1000
+
+  - id: totrandom-tail472
+    # 472-row slice of totrandom, corresponding to rows 1529..2000 of
+    # the QD-alone journal from the CG+QD 1.0/1.0 composite study
+    # (sustained noisy-neighbor regime). Bundled at build time under
+    # harness/src/pricing_reversal_harness/data/totrandom-tail472.json.
+    # Purpose: apples-to-apples re-run of the same 472 prompts under a
+    # different scorer configuration, allowing fair head-to-head
+    # comparison against the QD-sustained slice of the previous study.
+    split: shuffled-tail472
+    file_prefix: totrandom-tail472
+    category: mixed
+    scorer: dispatch_by_source_dataset
+    expected_count: 472

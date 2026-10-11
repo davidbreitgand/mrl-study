@@ -1,0 +1,103 @@
+# Hub EPP values — multicluster-queue-scorer variant (the QD baseline).
+#
+# Production baseline for the mrl head-to-head. `multicluster-queue-scorer`
+# is the current default Distribution-axis scorer in the multicluster
+# EPP; every Δ% in the head-to-head aggregator is computed against
+# this run.
+#
+# Sole Distribution-axis scorer. NO Affinity-axis scorers.
+#
+# Layered on top of ../../../stack/router/base.values.yaml (shared with
+# every hub-values-*.yaml in this study).
+
+router:
+  extraServicePorts:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 8081
+
+  epp:
+    # Same EPP image as every other hub-values in this study — the
+    # scorer choice lives in pluginsCustomConfig, not the image.
+    #
+    # The registry/repository/tag values below are placeholders.
+    # scripts/deploy-hub.sh overrides them at deploy time from either
+    #   (a) EPP_REGISTRY / EPP_REPOSITORY env vars, or
+    #   (b) the ${STUDY_DIR}/.epp-image file written by
+    #       scripts/build-image.sh.
+    # Example production values: registry: ghcr.io/davidbreitgand
+    image:
+      registry: PLACEHOLDER_OVERRIDDEN_BY_DEPLOY_HUB
+      repository: mrl-aware-epp
+      tag: latest
+      pullPolicy: Always
+
+    flags:
+      # Uniform across all four Hub configs. QD is Stable and doesn't
+      # require this flag; keeping it on removes flag-presence as a
+      # between-run variable.
+      allow-experimental-plugins: true
+
+    pluginsConfigFile: "qd-hub-plugins.yaml"
+    pluginsCustomConfig:
+      qd-hub-plugins.yaml: |
+        apiVersion: llm-d.ai/v1alpha1
+        kind: EndpointPickerConfig
+        plugins:
+          - type: single-profile-handler
+          - type: label-selector-filter
+            name: gemma-only
+            parameters:
+              matchLabels:
+                served-model: gemma-4-26b-a4b
+          - type: decode-filter
+          - type: max-score-picker
+          - type: multicluster-queue-scorer
+            name: qd
+          # Per-request spoke attribution — see hub-values-mrl.yaml for
+          # the rationale.
+          - type: destination-endpoint-served
+          - type: multicluster-file-discovery
+            name: multicluster-file-discovery
+            parameters:
+              path: /etc/epp/clusters.yaml
+              watchFile: true
+          # QD needs pool-aggregate queue size, which the multicluster
+          # metrics extractor derives from the spokes' /metrics scrape.
+          - type: multicluster-metrics-data-source
+            name: metrics-source
+            parameters:
+              scheme: http
+          - type: multicluster-metrics-extractor
+            name: metrics-extractor
+        schedulingProfiles:
+          - name: default
+            plugins:
+              - pluginRef: gemma-only
+              - pluginRef: decode-filter
+              - pluginRef: qd
+              - pluginRef: max-score-picker
+        dataLayer:
+          injectDefaults: false
+          discovery:
+            endpoints:
+              pluginRef: multicluster-file-discovery
+          sources:
+            - pluginRef: metrics-source
+              extractors:
+                - pluginRef: metrics-extractor
+
+    volumes:
+      - name: clusters
+        configMap:
+          name: mrl-headtohead-clusters
+    volumeMounts:
+      - name: clusters
+        mountPath: /etc/epp/clusters.yaml
+        subPath: clusters.yaml
+
+  modelServers:
+    matchLabels:
+      llm-d.ai/guide: mrl-headtohead
+      llm-d.ai/role: decode

@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pricing-reversal-harness"
+version = "0.1.0"
+description = "In-cluster harness that replays the price-reversal experiments against open-source reasoning models on llm-d."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "David Breitgand" }]
+dependencies = [
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "pydantic>=2.6",
+    "jinja2>=3.1",
+    "kubernetes>=29.0",
+    # `datasets` is still needed by three loaders (aime, gpqa,
+    # livemathbench) — they use standard parquet-backed repos where
+    # `load_dataset()` handles fetch, sharding, and column typing for
+    # us. The three loaders that used to force us to pin (mmlupro's
+    # `List` feature type broke on 3.x; livecodebench's script-backed
+    # repo broke on 4.x; arc-agi-v1's `List` feature type broke on
+    # 3.x) have all been refactored to fetch shards directly via
+    # huggingface_hub + pyarrow/json — leaving no version constraint
+    # from within our loaders. Both 3.x and 4.x work for the remaining
+    # three; leaving the range open so a security fix on either side
+    # doesn't require a coordinated change.
+    "datasets>=3.0",
+    # huggingface_hub + pyarrow are used directly by mmlupro,
+    # arc-agi-v1, and livecodebench loaders (bypassing `datasets`
+    # entirely). Both are transitive deps of `datasets`; declared
+    # explicitly so the bypass loaders survive future upstream
+    # reshuffling of `datasets`'s own deps.
+    "huggingface_hub>=0.20",
+    "pyarrow>=14.0",
+    "transformers>=4.44",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+pricing-reversal-harness = "pricing_reversal_harness.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# Bundle the shipped `data/` directory (currently totrandom.json) into the
+# installed package. Referenced at runtime via `importlib.resources` so
+# the harness can read it without knowing an absolute filesystem path —
+# works both when the package is installed in the container image and
+# when a developer runs `python -m pricing_reversal_harness` from a
+# source checkout.
+[tool.setuptools.package-data]
+pricing_reversal_harness = ["data/*.json"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

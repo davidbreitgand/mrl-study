@@ -1,0 +1,52 @@
+# Build artifacts written by scripts/build-image.sh and
+# scripts/build-harness-image.sh. Contain the per-build image tag the
+# invoking user pushed to their own registry — must not be committed
+# because they leak the operator's registry namespace.
+.epp-image
+.harness-image
+
+# Python virtualenvs. The harness bundle is installed via `uv` /
+# `pip install -e .` into harness/.venv at build-image time; that tree
+# is architecture- and OS-specific and should never be committed.
+harness/.venv/
+**/.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Egg-info from `pip install -e .`
+harness/src/*.egg-info/
+**/*.egg-info/
+
+# Editor / OS scratch
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Secret material — none should exist here, but defensive:
+# kubeconfigs, service-account tokens, private keys, and anything that
+# looks like a bearer or api credential.
+kubeconfig*
+*.kubeconfig
+*.token
+*.pem
+*.key
+!config/*.yaml  # allow YAML config files
+.env
+.env.*
+!.env.example
+
+# Local scratch under harness/
+harness/build/
+harness/dist/
+
+# The dataset build script writes intermediate downloads here.
+# The generated totrandom.json IS committed (or shipped as an
+# attachment); temporary caches are not.
+harness/src/pricing_reversal_harness/data/.cache/
+
+# Rendered per-cell experiment.yaml files land in /tmp by default, but
+# in case a script writes here defensively:
+*-experiment.yaml.tmp

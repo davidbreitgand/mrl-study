@@ -1,0 +1,42 @@
+# Cluster (spoke) topology for the mrl head-to-head studies.
+#
+# Referenced identically by all four studies:
+#   - mrl_study/                     (this file)
+#   - mrl_study/queue_depth_study/
+#   - mrl_study/ar_study/
+#   - mrl_study/latency_observer_study/
+#
+# Two spokes, no rate labels, no cost fields. The costguard study attached
+# `llm-d.ai/gpu-hourly-rate-usd` labels to reflect a 2x GPU-count difference,
+# but this study does not price GPUs — it measures scorer behavior under
+# asymmetric per-request service time. See config/models.yaml for the TP
+# asymmetry between the two spokes.
+#
+# Schema: llm-d-router's multicluster-file-discovery plugin expects a
+# top-level `endpoints:` list; each entry is one spoke, keyed for the Hub's
+# `label-selector-filter` by `labels.served-model`. The router's Envoy uses
+# ORIGINAL_DST with `use_http_header: x-gateway-destination-endpoint` and
+# reaches each spoke at address:port; hostnames are permitted, but the
+# study substitutes discovered Service ClusterIPs via envsubst in
+# scripts/deploy-hub.sh.
+endpoints:
+  - name: spoke-gemma-a
+    address: "${SPOKE_A_IP}"
+    port: "${SPOKE_A_PORT}"
+    labels:
+      served-model: gemma-4-26b-a4b
+      # TP is the harness's per-spoke μ scaling input. The Hub does not
+      # read it.
+      llm-d.ai/tp-size: "2"
+      # The harness parses this into a float. This study does not price
+      # GPUs, so the value is a zero placeholder; downstream cost math
+      # multiplies by it and collapses to zero, which is the desired
+      # no-op for a study that measures scorer behavior, not cost.
+      llm-d.ai/gpu-hourly-rate-usd: "0"
+  - name: spoke-gemma-b
+    address: "${SPOKE_B_IP}"
+    port: "${SPOKE_B_PORT}"
+    labels:
+      served-model: gemma-4-26b-a4b
+      llm-d.ai/tp-size: "4"
+      llm-d.ai/gpu-hourly-rate-usd: "0"

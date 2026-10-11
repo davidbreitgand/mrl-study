@@ -1,0 +1,83 @@
+# Global experiment knobs consumed by the harness orchestrator.
+#
+# CostGuard cross-cluster study: the harness plays mmlupro at the Hub
+# EPP's Envoy Service. The Hub's CostGuard scorer + max-score-picker
+# choose which peer cluster serves each request. See
+# ~/.claude/plans/costguard-evaluation-study.md.
+
+experiment:
+  # No repeated-trial phase in this iteration. `repeated_trial_dataset` is
+  # still resolved at orchestrator startup (KeyError otherwise), so it
+  # points at mmlupro even though the `range(repeated_trials)` loop
+  # yields no iterations.
+  repeated_trials: 0
+  repeated_trial_dataset: mmlupro
+
+  # `totrandom` = shuffled 4834-row pool mixing six source datasets
+  # (aime, gpqa, livemathbench, mmlupro, arc-agi-v1, livecodebench).
+  # Prompt bodies are pre-formed at build time; per-row scoring routes
+  # by source_dataset via dispatch_by_source_dataset. Stresses CostGuard
+  # with a much wider service-time distribution than single-source
+  # mmlupro. See datasets.yaml `totrandom` entry.
+  consolidated_datasets:
+    - totrandom
+
+  # HTTP client
+  # `max_concurrent_requests` is the VLLMClient semaphore ceiling. Under
+  # the Poisson arrival driver it is a runaway guard, not the primary
+  # load-shaping knob; the Poisson driver keeps E[N] ≈ target_concurrent.
+  # Bumped from 8 to 128 so the semaphore stops shaping the load.
+  max_concurrent_requests: 128
+  request_timeout_seconds: 600
+  retry_max_attempts: 3
+  retry_backoff_seconds: 5
+
+  # Poisson arrival driver.
+  # λ = target_concurrent / s_hat, where s_hat is an EWMA of observed
+  # elapsed_seconds. By Little's law, E[N] = λ · E[S] = target_concurrent.
+  # `service_time_ewma_alpha` smooths s_hat; small α ⇒ slower drift.
+  # `arrival_seed` seeds the exponential-gap RNG; null for
+  # nondeterministic. Cold start: first `target_concurrent` rows dispatch
+  # back-to-back to prime s_hat.
+  target_concurrent: 12
+  service_time_ewma_alpha: 0.05
+  arrival_seed: null
+
+  # Open-loop staged driver: fixed lambda per stage, ignores s_hat.
+  # See harness/src/pricing_reversal_harness/runner.py and the QD
+  # adversarial-workload sanity-check plan
+  # (~/.claude/plans/valiant-dreaming-goose.md).
+  arrival_mode: closed_loop
+  # To rerun open-loop staged:
+  #   arrival_mode: open_loop_staged
+  #   arrival_stages:
+  #     - {lambda: 0.5, rows: 1000}
+
+  # Hub EPP's Envoy Service (Helm-generated name from
+  # `helm install pricing-reversal-costguard-hub ...` — the chart
+  # appends `-epp` to produce the Service name).
+  router_service: "pricing-reversal-costguard-hub-epp"
+  router_port: 80
+
+  # Heartbeat cadence
+  heartbeat_interval_seconds: 5
+
+  # Post-Deployment readiness verification: send a tiny probe before starting.
+  ready_probe_prompt: "Reply with the single word: READY"
+  ready_probe_max_tokens: 8
+  # 60 s was too short: kubelet's readinessProbe says the vLLM /v1/models
+  # endpoint is up (that's just "process listening"), but the router's EPP
+  # only registers the backend after its own periodic scrape and picks up
+  # the /v1/models advertisement. Give the round-trip a real chance.
+  ready_probe_deadline_seconds: 300
+
+  # Preemption-resilience knobs. See harness/runner.py + orchestrator.py.
+  #
+  # When the router returns "failed to find endpoint candidates" (503),
+  # the runner pauses all in-flight queries and dispatches a shared
+  # re-probe. `no_endpoints_recovery_seconds` bounds that wait.
+  no_endpoints_recovery_seconds: 300
+  # If ≥ this fraction of a run's queries error out, skip the model's
+  # remaining datasets + repeated-trial runs (assume the environment is
+  # broken for this model, not that every query is legitimately failing).
+  all_errored_threshold: 0.98

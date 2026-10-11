@@ -1,0 +1,205 @@
+# Self-contained vLLM model server manifest for the price-reversal study.
+#
+# Rendered per-model by stack/scripts/render_manifest.py from a single entry in
+# config/models.yaml. Non-disaggregated single-replica shape, matches the router's
+# matchLabels: `llm-d.ai/guide: pricing-reversal`.
+#
+# Writable emptyDir mounts at /.cache, /.triton, /.config, /.tensorrt_llm
+# are retained: vLLM writes to those paths during startup, and the mounts
+# make them writable regardless of the container image's rootfs mode.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pricing-reversal-vllm-{{ model_id }}
+  namespace: {{ namespace }}
+  labels:
+    llm-d.ai/guide: pricing-reversal
+    llm-d.ai/model: {{ model_id }}
+    llm-d.ai/accelerator-variant: gpu
+    llm-d.ai/accelerator-vendor: nvidia
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pricing-reversal-hf-cache-{{ model_id }}
+  namespace: {{ namespace }}
+  labels:
+    llm-d.ai/guide: pricing-reversal
+    llm-d.ai/model: {{ model_id }}
+spec:
+  # RWX so a preempted Pod can reschedule to a different node without
+  # waiting for the old node to detach the volume. The `shared-vast`
+  # StorageClass supports RWX; substitute a StorageClass with equivalent
+  # semantics on other clusters. Read-only workload after the initial
+  # HF download — no writer coordination to worry about.
+  # NOTE: accessModes are immutable; changing this on an existing PVC
+  # requires deleting and recreating it (see docs/troubleshooting.md).
+  # ReadWriteOnce (not RWX) so VAST's CSI driver honors the pod's
+  # fsGroup: 1000 and chown's the mount on attach. VAST's
+  # fsGroupPolicy=ReadWriteOnceWithFSType only activates the chown on
+  # RWO volumes. Single-replica Deployment doesn't need RWX; each
+  # vLLM Pod exclusively owns its cache PVC.
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: shared-vast
+  resources:
+    requests:
+      storage: {{ hf_cache_size_gi }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pricing-reversal-vllm-{{ model_id }}
+  namespace: {{ namespace }}
+  labels:
+    llm-d.ai/role: decode
+    llm-d.ai/guide: pricing-reversal
+    llm-d.ai/model: {{ model_id }}
+    llm-d.ai/accelerator-variant: gpu
+    llm-d.ai/accelerator-vendor: nvidia
+    # Per-model label used by the parallel-harness per-worker router
+    # to match ONLY this model's vLLM pods (matchLabels contract).
+    pricing-reversal.study/model: {{ model_id }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      llm-d.ai/role: decode
+      llm-d.ai/guide: pricing-reversal
+      llm-d.ai/model: {{ model_id }}
+  template:
+    metadata:
+      labels:
+        llm-d.ai/role: decode
+        llm-d.ai/guide: pricing-reversal
+        llm-d.ai/model: {{ model_id }}
+        llm-d.ai/accelerator-variant: gpu
+        llm-d.ai/accelerator-vendor: nvidia
+        pricing-reversal.study/model: {{ model_id }}
+    spec:
+      nodeSelector:
+        nvidia.com/gpu.product: NVIDIA-H200
+      serviceAccountName: pricing-reversal-vllm-{{ model_id }}
+      securityContext:
+        # vLLM's official image (vllm/vllm-openai) runs as UID 1000.
+        # fsGroup makes Kubernetes chown the PVC mount to GID 1000 on
+        # attach, so the model-cache volume (HF_HOME=/model-cache) is
+        # writable by the vLLM process. Without this, on VAST's CSI
+        # driver, the freshly-provisioned filesystem is owned by root
+        # and vLLM cannot write hf-cache/hub entries during model
+        # download. OnRootMismatch skips the chown on volumes that
+        # already have the right group, so subsequent mounts are fast.
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: modelserver
+          image: vllm/vllm-openai:v0.26.0
+          command: ["vllm", "serve"]
+          args:
+            - "{{ hf_repo }}"
+            - "--served-model-name={{ served_model_name }}"
+            - "--disable-access-log-for-endpoints=/health,/metrics,/v1/models"
+            - "--trust-remote-code"
+            - "--tensor-parallel-size={{ tensor_parallel_size }}"
+            - "--dtype=auto"
+            - "--max-model-len={{ max_model_len }}"
+            - "--gpu-memory-utilization={{ gpu_memory_utilization }}"
+            - "--reasoning-parser={{ reasoning_parser }}"
+{% for arg in extra_vllm_args %}
+            - "{{ arg }}"
+{% endfor %}
+          ports:
+            - name: modelserver
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ hf_token_secret }}
+                  key: HF_TOKEN
+            - name: USER
+              value: "llm-d"
+            - name: PYTORCH_ALLOC_CONF
+              value: "expandable_segments:True"
+            - name: HF_HOME
+              value: "/model-cache"
+            # Diagnostic insurance: NCCL emits its init/graph/tuning
+            # decisions on stderr. Cheap (a few hundred lines during
+            # startup, none during steady-state serving), invaluable when
+            # a TP>=2 pod fails `ncclCommInitRank` with the generic
+            # "unhandled cuda error" — turning this on after the fact
+            # would require a re-run of the failed model.
+            - name: NCCL_DEBUG
+              value: "INFO"
+            - name: NCCL_DEBUG_SUBSYS
+              value: "INIT,GRAPH,ENV,TUNING"
+          resources:
+            limits:
+              cpu: "{{ cpu_limit }}"
+              memory: {{ memory_limit_gi }}Gi
+              nvidia.com/gpu: {{ tensor_parallel_size }}
+            requests:
+              cpu: "{{ cpu_request }}"
+              memory: {{ memory_request_gi }}Gi
+              nvidia.com/gpu: {{ tensor_parallel_size }}
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: shm
+            - mountPath: /.cache
+              name: torch-compile-cache
+            - mountPath: /.triton
+              name: triton-cache
+            - mountPath: /.config
+              name: vllm-config
+            - mountPath: /.tensorrt_llm
+              name: tensorrt-llm-cache
+            - mountPath: /model-cache
+              name: hf-cache
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: modelserver
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /v1/models
+              port: modelserver
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /v1/models
+              port: modelserver
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            # 240 * 30s = 7200s = 120 min. Sized to accommodate:
+            #   (a) heavy GPU contention that keeps the Pod Pending for
+            #       10-30+ min before it can schedule (this cluster is
+            #       heavily shared with other tenants), plus
+            #   (b) HF weight download on a cold PVC (multi-GB), plus
+            #   (c) vLLM startup + CUDA-graph capture + weight sharding.
+            # Per-model harness-side timeout in models.yaml is set to the
+            # same budget so both ceilings line up.
+            timeoutSeconds: 5
+            failureThreshold: 240
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 20Gi
+        - name: torch-compile-cache
+          emptyDir: {}
+        - name: triton-cache
+          emptyDir: {}
+        - name: vllm-config
+          emptyDir: {}
+        - name: tensorrt-llm-cache
+          emptyDir: {}
+        - name: hf-cache
+          persistentVolumeClaim:
+            claimName: pricing-reversal-hf-cache-{{ model_id }}

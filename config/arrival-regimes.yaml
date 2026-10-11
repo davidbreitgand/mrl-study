@@ -1,0 +1,49 @@
+# Arrival-regime templates for the mrl head-to-head studies.
+#
+# Rendered by scripts/render_experiment.py into a per-cell experiment.yaml.
+# The lambda value comes from local_results/calibration.json (written by
+# scripts/calibrate-lambda.sh once at study setup).
+#
+# All three regimes share the same lambda so offered load is matched across
+# arrival shapes; only the burstiness (the shape of the inter-arrival gap
+# distribution) differs.
+#
+#   - poisson:      exponential inter-arrival gaps, CV = 1.
+#   - weibull-0.5:  Weibull(shape=0.5) gaps, CV ~ 2.2, moderately bursty.
+#   - weibull-0.3:  Weibull(shape=0.3) gaps, CV ~ 3.6, heavily bursty.
+#
+# The weibull_shape field is honored by the mrl_study fork of the harness
+# (added in mrl_study/harness/src/pricing_reversal_harness/runner.py). When
+# unset, the harness draws exponential gaps (Poisson arrivals) as it does
+# today in the costguard harness.
+#
+# Both spokes need to see the full 2000-row workload per cell; the harness
+# drives the Hub URL only, and the Hub routes each request to whichever
+# spoke its configured scorer picks.
+
+regimes:
+  poisson:
+    arrival_stages:
+      - lambda: ${STUDY_LAMBDA}
+        rows: 2000
+        # weibull_shape unset -> exponential gaps.
+
+  weibull-0.5:
+    arrival_stages:
+      - lambda: ${STUDY_LAMBDA}
+        rows: 2000
+        weibull_shape: 0.5
+
+  weibull-0.3:
+    arrival_stages:
+      - lambda: ${STUDY_LAMBDA}
+        rows: 2000
+        weibull_shape: 0.3
+
+# Smoke tests use the same shape but a much smaller row count.
+# Passed via CLI --smoke <N>; render_experiment.py substitutes the row count.
+smoke_defaults:
+  qd:  50    # QD scorer has no warm-up requirement.
+  ar:  50    # AR scorer has no warm-up requirement.
+  lat: 50    # Latency observer's minRequests=10 default warms within 50 easily.
+  mrl: 150   # MRL scorer needs both TTFT and decode digests past minSamples=60.

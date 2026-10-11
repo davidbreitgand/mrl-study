@@ -1,0 +1,91 @@
+# Hub EPP values — active-request-scorer variant.
+#
+# Sim's ar_epp reference. Sole Distribution-axis scorer.
+# NO Affinity-axis scorers.
+#
+# Reads per-endpoint in-flight request count from InFlightLoadDataKey;
+# the DAG auto-creates inflight-load-producer from ar's Required-key
+# declaration, but we still need to list it under dataLayer.sources
+# for its recompute to tick.
+
+router:
+  extraServicePorts:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 8081
+
+  epp:
+    # The registry/repository/tag values below are placeholders.
+    # scripts/deploy-hub.sh overrides them at deploy time from either
+    #   (a) EPP_REGISTRY / EPP_REPOSITORY env vars, or
+    #   (b) the ${STUDY_DIR}/.epp-image file written by
+    #       scripts/build-image.sh.
+    # Example production values: registry: ghcr.io/davidbreitgand
+    image:
+      registry: PLACEHOLDER_OVERRIDDEN_BY_DEPLOY_HUB
+      repository: mrl-aware-epp
+      tag: latest
+      pullPolicy: Always
+
+    flags:
+      allow-experimental-plugins: true
+
+    pluginsConfigFile: "ar-hub-plugins.yaml"
+    pluginsCustomConfig:
+      ar-hub-plugins.yaml: |
+        apiVersion: llm-d.ai/v1alpha1
+        kind: EndpointPickerConfig
+        plugins:
+          - type: single-profile-handler
+          - type: label-selector-filter
+            name: gemma-only
+            parameters:
+              matchLabels:
+                served-model: gemma-4-26b-a4b
+          - type: decode-filter
+          - type: max-score-picker
+          - type: active-request-scorer
+            name: ar
+            parameters:
+              idleThreshold: 0
+              maxBusyScore: 1.0
+          # Per-request spoke attribution — see hub-values-mrl.yaml for
+          # the rationale.
+          - type: destination-endpoint-served
+          - type: multicluster-file-discovery
+            name: multicluster-file-discovery
+            parameters:
+              path: /etc/epp/clusters.yaml
+              watchFile: true
+        schedulingProfiles:
+          - name: default
+            plugins:
+              - pluginRef: gemma-only
+              - pluginRef: decode-filter
+              - pluginRef: ar
+              - pluginRef: max-score-picker
+        dataLayer:
+          injectDefaults: false
+          discovery:
+            endpoints:
+              pluginRef: multicluster-file-discovery
+          # No explicit sources: inflight-load-producer is not a fwkdl.DataSource;
+          # the framework auto-creates and wires it via the Consumes/Produces
+          # DataKey match on active-request-scorer's Required InFlightLoadDataKey
+          # declaration. Its request-control hooks (PreRequest, ResponseBody)
+          # keep it ticking without needing a poll-driven source entry.
+
+    volumes:
+      - name: clusters
+        configMap:
+          name: mrl-headtohead-clusters
+    volumeMounts:
+      - name: clusters
+        mountPath: /etc/epp/clusters.yaml
+        subPath: clusters.yaml
+
+  modelServers:
+    matchLabels:
+      llm-d.ai/guide: mrl-headtohead
+      llm-d.ai/role: decode

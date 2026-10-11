@@ -1,0 +1,50 @@
+# Namespace-scoped RBAC that lets the harness Pod apply/delete vLLM Deployments,
+# their Services, PVCs, and inspect Pods/Events for readiness accounting.
+# Every verb is namespace-scoped; no cluster-scoped role bindings.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pricing-reversal-harness
+  # namespace injected by kubectl -n <ns> at apply time
+  labels:
+    llm-d.ai/guide: mrl-headtohead
+    app.kubernetes.io/component: harness
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pricing-reversal-harness
+  # namespace injected by kubectl -n <ns> at apply time
+  labels:
+    llm-d.ai/guide: mrl-headtohead
+    app.kubernetes.io/component: harness
+rules:
+  - apiGroups: [""]
+    resources: ["services", "persistentvolumeclaims", "serviceaccounts", "configmaps", "events"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale", "deployments/status"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pricing-reversal-harness
+  # namespace injected by kubectl -n <ns> at apply time
+  labels:
+    llm-d.ai/guide: mrl-headtohead
+    app.kubernetes.io/component: harness
+subjects:
+  - kind: ServiceAccount
+    name: pricing-reversal-harness
+    # The RoleBinding subject namespace must be explicit — kubectl -n
+    # does NOT inject namespace into subject-list entries. The mrl_study
+    # harness runs in the Hub namespace.
+    namespace: mrl-headtohead
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pricing-reversal-harness

@@ -1,0 +1,58 @@
+# Spoke EPP values (llm-d-router-standalone chart v0.9.0).
+#
+# A spoke is an ordinary EPP scoped to its cluster's local gemma vLLM
+# via `router.modelServers.matchLabels`. No multicluster-file-discovery
+# and no CostGuard plugins here — the spoke's job is to serve local
+# traffic; multicluster steering lives on the Hub. Stock chart profile
+# (queue + kv-cache + prefix-cache scorers).
+#
+# The same values file is reused for both spokes; deploy-spoke.sh
+# supplies different NAMESPACE and release name per spoke.
+#
+# Layered on top of base.values.yaml.
+
+router:
+  extraServicePorts:
+    - name: http
+      port: 8081
+      protocol: TCP
+      targetPort: 8081
+
+  # Spokes use upstream v0.9.0 unless the operator prefers the
+  # feature/costguard image (it works too, just has extra Alpha
+  # plugins registered but unused). Default: upstream stable.
+  epp:
+    image:
+      registry: ghcr.io/llm-d
+      repository: llm-d-router-endpoint-picker
+      tag: v0.9.0
+      pullPolicy: IfNotPresent
+    # No --allow-experimental-plugins; spoke doesn't use Alpha plugins.
+    # Uses chart's stock default-plugins.yaml — no pluginsCustomConfig.
+    #
+    # The chart's default enables --secure-serving=true, putting the
+    # ext_proc gRPC server behind a self-signed TLS cert. Istio's
+    # InferencePool integration dials plaintext (endpoint metadata is
+    # empty so transport_socket_matches picks tlsMode-disabled ->
+    # raw_buffer), which hits a TCP RST from the TLS-only listener.
+    # Rendered by the chart as `--secure-serving=false`.
+    #
+    # The chart's default also enables --metrics-endpoint-auth=true,
+    # gating /metrics on a bearer token via the controller-runtime
+    # metrics authz filter. The Hub's multicluster-metrics-data-source
+    # scrapes plaintext http://spoke:9090/metrics with no credentials,
+    # so the authz filter returns 401. Disabled here so the queue and
+    # kv-cache scorers can consume the spoke metrics.
+    flags:
+      secure-serving: false
+      metrics-endpoint-auth: false
+
+  # Spoke selects the local gemma vLLM pods via matchLabels.
+  # Must match the labels the vLLM Deployment template emits
+  # (stack/modelserver/vllm-deployment.yaml.tmpl): the study reuses
+  # the pricing-reversal harness, whose deployments carry
+  # `llm-d.ai/guide: pricing-reversal` unchanged.
+  modelServers:
+    matchLabels:
+      llm-d.ai/guide: pricing-reversal
+      llm-d.ai/role: decode

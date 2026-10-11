@@ -1,0 +1,32 @@
+# Model roster for the mrl head-to-head studies.
+#
+# One model — gemma-4-26b-a4b — deployed on TWO spokes in the same cluster,
+# fronted by one Hub EPP that runs the study's configured scorer over both
+# spokes as peers. The two spokes differ ONLY in tensor-parallel size:
+# spoke-gemma-a runs TP=2, spoke-gemma-b runs TP=4. That asymmetry creates
+# the sim's asymmetric-fleet regime where a Distribution-axis scorer has
+# something meaningful to decide.
+#
+# The `tensor_parallel_size` below is the DEFAULT (spoke-gemma-a, TP=2).
+# scripts/deploy-spoke.sh accepts a TP_OVERRIDE env var to render the
+# vLLM Deployment with TP=4 for spoke-gemma-b.
+
+models:
+  - id: gemma-4-26b-a4b
+    hf_repo: google/gemma-4-26B-A4B-it
+    served_model_name: google/gemma-4-26B-A4B-it
+    tensor_parallel_size: 2         # spoke-gemma-a; overridden to 4 for spoke-gemma-b
+    reasoning_parser: gemma4
+    max_model_len: 69632
+    gpu_memory_utilization: 0.9
+    extra_vllm_args:
+      - "--enable-chunked-prefill"
+      - "--max-num-seqs=8"
+    chat_template_kwargs:
+      enable_thinking: true
+    sampling:
+      temperature: 0.7
+      top_p: 0.95
+      max_tokens: 65536
+    hf_cache_size_gi: 200
+    ready_timeout_seconds: 5400

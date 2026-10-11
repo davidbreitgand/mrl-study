@@ -1,0 +1,110 @@
+# Hub EPP values — mrl-scorer-hub variant.
+#
+# Sole Distribution-axis scorer: mrl-scorer-hub with its paired
+# sojourn-time-observer-hub producer. NO Affinity-axis scorers
+# (prefix-cache, KV-cache) — the head-to-head measurement isolates
+# what the Distribution-axis scorer alone contributes to routing.
+#
+# The mrl-scorer-hub is an alpha plugin from the llm-d-router feature/mrl-aware
+# branch. Uses the same image as every other hub-values in this study
+# (image tag from feature/mrl-aware's build-image.sh). The scorer choice
+# lives entirely in the plugins/schedulingProfiles block.
+#
+# Layered on top of base.values.yaml.
+
+router:
+  extraServicePorts:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 8081
+
+  epp:
+    # EPP image built from the llm-d-router feature/mrl-aware branch.
+    # The exact tag comes from scripts/build-image.sh's git sha.
+    #
+    # The registry/repository/tag values below are placeholders.
+    # scripts/deploy-hub.sh overrides them at deploy time from either
+    #   (a) EPP_REGISTRY / EPP_REPOSITORY env vars, or
+    #   (b) the ${STUDY_DIR}/.epp-image file written by
+    #       scripts/build-image.sh.
+    # Example production values: registry: ghcr.io/davidbreitgand
+    image:
+      registry: PLACEHOLDER_OVERRIDDEN_BY_DEPLOY_HUB
+      repository: mrl-aware-epp
+      tag: latest
+      pullPolicy: Always
+
+    flags:
+      allow-experimental-plugins: true
+
+    pluginsConfigFile: "mrl-hub-plugins.yaml"
+    pluginsCustomConfig:
+      mrl-hub-plugins.yaml: |
+        apiVersion: llm-d.ai/v1alpha1
+        kind: EndpointPickerConfig
+        plugins:
+          - type: single-profile-handler
+          - type: label-selector-filter
+            name: gemma-only
+            parameters:
+              matchLabels:
+                served-model: gemma-4-26b-a4b
+          - type: decode-filter
+          - type: max-score-picker
+          # The observer must precede the scorer in list order; the DAG
+          # will re-order by Required-key anyway, but making list order
+          # match DAG order helps readers.
+          - type: sojourn-time-observer-hub
+            name: sojourn-observer
+            parameters:
+              compression: 200
+              minSamples: 60
+              intervalDuration: 5s
+          - type: mrl-scorer-hub
+            name: mrl
+            parameters:
+              sojournTimeObserverProducerName: sojourn-observer
+          # Per-request spoke attribution: the plugin writes the picked
+          # endpoint's Name into an x-conformance-test-served-endpoint
+          # response header that the harness reads into
+          # extra_fields.served_endpoint, so downstream analysis can
+          # split latency/throughput by TP=2 vs TP=4 spoke. Required
+          # under ORIGINAL_DST since the -verifier plugin, which
+          # relies on Envoy's envoy.lb metadata, does not populate
+          # anything under ORIGINAL_DST.
+          - type: destination-endpoint-served
+          - type: multicluster-file-discovery
+            name: multicluster-file-discovery
+            parameters:
+              path: /etc/epp/clusters.yaml
+              watchFile: true
+        schedulingProfiles:
+          - name: default
+            plugins:
+              - pluginRef: gemma-only
+              - pluginRef: decode-filter
+              - pluginRef: mrl
+              - pluginRef: max-score-picker
+        dataLayer:
+          injectDefaults: false
+          discovery:
+            endpoints:
+              pluginRef: multicluster-file-discovery
+          sources:
+            # Drives the sojourn-time-observer-hub's periodic snapshot flush.
+            - pluginRef: sojourn-observer
+
+    volumes:
+      - name: clusters
+        configMap:
+          name: mrl-headtohead-clusters
+    volumeMounts:
+      - name: clusters
+        mountPath: /etc/epp/clusters.yaml
+        subPath: clusters.yaml
+
+  modelServers:
+    matchLabels:
+      llm-d.ai/guide: mrl-headtohead
+      llm-d.ai/role: decode
