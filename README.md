@@ -35,7 +35,7 @@ See `make help` for the parameter surface.
 
 ## Reproducibility — quick facts
 
-- **Runtime**: ~12-16 hours end-to-end for a 4-scorer × 3-regime study
+- **Runtime**: ~12-16 hours end-to-end for one cell 10 replication of a 4-scorer × 3-regime study
   at n=472 per cell (add ~10 hours if you want the p99-replicated
   Poisson variant covered by `scripts/build_poisson_replicate_table.py`).
 - **Hardware**: 6 free NVIDIA H200 GPUs (spoke-gemma-a wants TP=2 = 2
